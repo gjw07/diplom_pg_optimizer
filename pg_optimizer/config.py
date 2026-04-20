@@ -2,6 +2,9 @@
 Конфигурационный файл проекта.
 Содержит все настраиваемые параметры системы.
 """
+import os
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Параметры оптимизируемых генов (параметров PostgreSQL)
 # Формат: "имя_параметра": {
@@ -79,8 +82,8 @@ DOCKER_CONFIG = {
 # Параметры нагрузочного тестирования
 JMETER_CONFIG = {
     'JMETER_PATH': 'jmeter',  # или полный путь к jmeter.bat
-    'TEST_PLAN': 'test_plan.jmx',
-    'RESULTS_DIR': './results/',
+    'TEST_PLAN': os.path.join(PROJECT_ROOT, 'test_plan.jmx'),
+    'RESULTS_DIR': os.path.join(PROJECT_ROOT, 'results/'),
     'TEST_DURATION': 30,       # seconds
     'NUM_THREADS': 10,         # количество виртуальных пользователей
     'RAMP_UP': 5               # время наращивания нагрузки (сек)

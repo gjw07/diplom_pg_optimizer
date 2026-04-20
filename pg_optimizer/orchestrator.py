@@ -35,7 +35,7 @@ class OptimizationOrchestrator:
         self.metrics = metrics_calculator
         self.ga = ga_engine
         
-        # Создаем директории для результатов (используем config.XXX)
+        # Создаем директории для результатов
         os.makedirs(config.PATHS['RESULTS_DIR'], exist_ok=True)
         os.makedirs(config.PATHS['LOGS_DIR'], exist_ok=True)
         os.makedirs(config.PATHS['CONFIGS_DIR'], exist_ok=True)
@@ -54,7 +54,7 @@ class OptimizationOrchestrator:
         headers = ['generation', 'individual', 'fitness', 'throughput', 
                    'avg_latency', 'error_rate', 'cpu_usage', 'memory_usage']
         
-        # Добавляем заголовки для каждого параметра (используем config.OPTIMIZABLE_PARAMS)
+        # Добавляем заголовки для каждого параметра
         for param_name in config.OPTIMIZABLE_PARAMS.keys():
             headers.append(param_name)
         

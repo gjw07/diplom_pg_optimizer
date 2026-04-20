@@ -1,13 +1,11 @@
-"""
-Точка входа для запуска экспериментов.
-Реализует Этап 5 из Плана 2.
-"""
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
 import logging
 import sys
 from datetime import datetime
 
-# Импортируем все модули
+# Импортируем все модули из текущего пакета
 from . import config
 from .db_controller import DBController
 from .load_tester import LoadTester
@@ -31,7 +29,6 @@ logger = logging.getLogger(__name__)
 def run_experiment():
     """
     Главная функция запуска эксперимента.
-    Выполняет все этапы оптимизации согласно Плану 2.
     """
     logger.info("=" * 70)
     logger.info("ЗАПУСК ЭКСПЕРИМЕНТА ПО ОПТИМИЗАЦИИ POSTGRESQL")
@@ -63,11 +60,9 @@ def run_experiment():
             dummy_evaluate
         )
         
-        # 4. Создание оркестратора
+        # 4. Создание оркестратора - ПЕРЕДАЕМ РОВНО 4 АРГУМЕНТА!
         logger.info("Этап 4: Создание оркестратора")
-        orchestrator = OptimizationOrchestrator(
-            db, load_tester, metrics, ga, config
-        )
+        orchestrator = OptimizationOrchestrator(db, load_tester, metrics, ga)
         
         # 5. Запуск базового теста
         logger.info("=" * 70)
@@ -110,14 +105,7 @@ def run_experiment():
         
     except Exception as e:
         logger.error(f"Критическая ошибка в эксперименте: {e}", exc_info=True)
-        # Пытаемся остановить контейнер в случае ошибки
-        try:
-            db.stop_container()
-        except:
-            pass
 
 
-
-   
 if __name__ == "__main__":
     run_experiment()
