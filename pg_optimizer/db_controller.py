@@ -5,6 +5,8 @@ import logging
 from typing import Dict, Any
 import subprocess
 
+from . import config 
+
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -97,20 +99,17 @@ class DBController:
             return False
     
     def apply_config(self, params: Dict[str, Any]) -> bool:
-        """
-        Применяет новую конфигурацию к PostgreSQL.
-        
-        Args:
-            params: Словарь с параметрами конфигурации
-            
-        Returns:
-            bool: True если конфигурация успешно применена
-        """
+        """Применяет новую конфигурацию к PostgreSQL."""
         try:
+            # Используем абсолютный путь
+            config_dir = os.path.join(config.PROJECT_ROOT, 'postgres_config')
+            os.makedirs(config_dir, exist_ok=True)
+            
+            config_file = os.path.join(config_dir, 'custom.conf')
+            
             # Формируем строки конфигурации
             config_lines = []
             for key, value in params.items():
-                # Преобразуем значения в формат PostgreSQL
                 if key in ['shared_buffers', 'work_mem', 'maintenance_work_mem', 'effective_cache_size']:
                     config_lines.append(f"{key} = '{value}MB'")
                 elif key == 'random_page_cost':
@@ -120,21 +119,25 @@ class DBController:
                 else:
                     config_lines.append(f"{key} = {value}")
             
-            # Создаем временный файл с конфигурацией
+            # Создаем файл с конфигурацией
             config_content = '\n'.join(config_lines)
-            with open('./postgres_config/custom.conf', 'w') as f:
+            with open(config_file, 'w', encoding='utf-8') as f:
                 f.write(config_content)
             
             # Копируем файл в контейнер
             if self.container:
-                # Создаем временный файл в контейнере
+                # Читаем содержимое файла
+                with open(config_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                
+                # Создаем файл в контейнере
                 self.container.exec_run(
-                    f'bash -c "echo \'{config_content}\' > /tmp/custom.conf"'
+                    f'bash -c "echo \'{content}\' > /tmp/custom.conf"'
                 )
                 
-                # Добавляем include в основной конфиг
+                # Добавляем include в основной конфиг (если еще не добавлено)
                 self.container.exec_run(
-                    'bash -c "echo \'include_if_exists = \'/tmp/custom.conf\'\' >> /var/lib/postgresql/data/postgresql.conf"'
+                    'bash -c "grep -q \'include_if_exists = \'/tmp/custom.conf\'\' /var/lib/postgresql/data/postgresql.conf || echo \'include_if_exists = \'/tmp/custom.conf\'\' >> /var/lib/postgresql/data/postgresql.conf"'
                 )
                 
                 logger.info(f"Конфигурация применена: {params}")
@@ -146,6 +149,7 @@ class DBController:
         except Exception as e:
             logger.error(f"Ошибка при применении конфигурации: {e}")
             return False
+
     
     def restart_db(self) -> bool:
         """

@@ -30,7 +30,7 @@ def setup_environment():
     Создает необходимые директории и проверяет наличие зависимостей.
     """
     # Создаем директории для результатов
-    dirs = ['./results', './logs', './plots', './configs']
+    dirs = ['./results', './logs', './plots', './configs', './experiment_results']
     for d in dirs:
         os.makedirs(d, exist_ok=True)
     
@@ -44,18 +44,27 @@ def setup_environment():
         logger.warning(f"Docker не доступен: {e}")
         logger.warning("Убедитесь, что Docker установлен и запущен")
     
-    # Проверяем наличие JMeter
-    import subprocess
+    # Проверяем наличие JMeter через конфигурацию проекта
     try:
-        result = subprocess.run(['jmeter', '--version'], 
-                                capture_output=True, 
-                                text=True)
-        if result.returncode == 0:
-            logger.info("JMeter найден")
+        # Импортируем конфигурацию, чтобы получить путь к JMeter
+        from pg_optimizer import config
+        jmeter_path = config.JMETER_CONFIG.get('JMETER_PATH', 'jmeter')
+        
+        if os.path.exists(jmeter_path):
+            logger.info(f"JMeter найден: {jmeter_path}")
         else:
-            logger.warning("JMeter не найден в PATH")
-    except FileNotFoundError:
-        logger.warning("JMeter не найден в PATH")
+            # Пробуем найти в PATH
+            import subprocess
+            result = subprocess.run(['jmeter', '--version'], 
+                                    capture_output=True, 
+                                    text=True,
+                                    shell=True)
+            if result.returncode == 0:
+                logger.info("JMeter найден в PATH")
+            else:
+                logger.warning("JMeter не найден. Будет использована эмуляция нагрузки")
+    except Exception as e:
+        logger.warning(f"Не удалось проверить JMeter: {e}")
     
     logger.info("Окружение настроено")
 
@@ -71,7 +80,6 @@ def run_optimization(args):
     setup_environment()
     
     try:
-        # Импортируем функцию из модуля run_experiment (относительный импорт)
         from pg_optimizer.run_experiment import run_experiment
         run_experiment()
     except Exception as e:
@@ -88,7 +96,6 @@ def analyze_results(args):
     logger.info("=" * 60)
     
     try:
-        # Импортируем функцию из модуля analyze_results (относительный импорт)
         from pg_optimizer.analyze_results import analyze
         analyze()
     except Exception as e:

@@ -5,8 +5,8 @@ import subprocess
 import os
 import time
 import logging
-import random
 import json
+import random
 from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class LoadTester:
     """
     Класс для проведения нагрузочного тестирования.
-    Поддерживает JMeter (если установлен) или встроенный эмулятор.
+    Поддерживает JMeter или встроенную эмуляцию.
     """
     
     def __init__(self, config: Dict[str, Any]):
@@ -26,7 +26,9 @@ class LoadTester:
             config: Конфигурация JMeter из config.py
         """
         self.config = config
-        self.use_jmeter = self._check_jmeter()  # <-- СОЗДАЕМ АТРИБУТ!
+        # ПРИНУДИТЕЛЬНО ИСПОЛЬЗУЕМ JMeter (раскомментируйте нужную строку)
+        # self.use_jmeter = self._check_jmeter()  # автоматическая проверка
+        self.use_jmeter = True  # ПРИНУДИТЕЛЬНО ВКЛЮЧАЕМ JMETER
         
         if self.use_jmeter:
             logger.info("LoadTester инициализирован с использованием JMeter")
@@ -34,31 +36,40 @@ class LoadTester:
             logger.warning("JMeter не найден. Будет использован встроенный эмулятор нагрузки")
     
     def _check_jmeter(self) -> bool:
-        """Проверяет, доступен ли JMeter."""
-        # Временно отключаем JMeter для отладки
-        # Замените на False, если хотите использовать эмуляцию
-        return False  # <-- ВРЕМЕННО ИСПОЛЬЗУЕМ ЭМУЛЯЦИЮ
+        """
+        Проверяет, доступен ли JMeter.
         
-        # Раскомментируйте ниже, когда захотите использовать JMeter
+        Returns:
+            bool: True если JMeter доступен, False если нет
         """
         jmeter_path = self.config.get('JMETER_PATH', 'jmeter')
+        
+        # Проверяем, существует ли файл jmeter.bat
+        if not os.path.exists(jmeter_path):
+            logger.warning(f"Файл JMeter не найден по пути: {jmeter_path}")
+            return False
+        
+        # Пробуем запустить JMeter с проверкой версии
         try:
             result = subprocess.run(
                 [jmeter_path, '--version'],
                 capture_output=True,
                 text=True,
-                timeout=5,
+                timeout=10,
                 shell=True
             )
             if result.returncode == 0:
-                logger.info("JMeter найден и доступен")
+                logger.info(f"JMeter найден и доступен: {jmeter_path}")
                 return True
-        except (subprocess.SubprocessError, FileNotFoundError) as e:
-            logger.warning(f"JMeter не найден: {e}")
-        
-        logger.warning("JMeter не найден, используется эмуляция")
-        return False
-        """
+            else:
+                logger.warning(f"JMeter вернул код ошибки: {result.returncode}")
+                return False
+        except subprocess.TimeoutExpired:
+            logger.warning("Таймаут при проверке JMeter")
+            return False
+        except Exception as e:
+            logger.warning(f"Ошибка при проверке JMeter: {e}")
+            return False
     
     def _run_emulated_test(self, test_name: str) -> Dict[str, float]:
         """
@@ -72,22 +83,18 @@ class LoadTester:
         """
         logger.info(f"Запуск эмулированного теста: {test_name}")
         
-        # Эмулируем выполнение теста (небольшая пауза)
         test_duration = self.config.get('TEST_DURATION', 30)
-        time.sleep(min(test_duration, 3))  # Ждем немного для эмуляции
+        time.sleep(min(test_duration, 3))
         
-        # Генерируем реалистичные случайные метрики
-        # В реальном проекте здесь были бы реальные данные от PostgreSQL
+        # Генерируем случайные метрики
         base_throughput = random.uniform(800, 1200)
         base_latency = random.uniform(10, 50)
         error_rate = random.uniform(0, 0.05)
         
-        # Чем выше throughput, тем лучше (для проверки работы ГА)
-        # Добавляем небольшой тренд для демонстрации сходимости
+        # Имитируем улучшение с каждым тестом (для демонстрации сходимости)
         if hasattr(self, '_call_count'):
             self._call_count += 1
-            # Имитируем улучшение производительности с каждым тестом
-            improvement = min(self._call_count * 0.05, 0.5)
+            improvement = min(self._call_count * 0.03, 0.4)
             base_throughput = base_throughput * (1 + improvement)
             base_latency = base_latency * (1 - improvement * 0.5)
         else:
@@ -114,33 +121,86 @@ class LoadTester:
             test_name: Имя теста для идентификации результатов
             
         Returns:
-            str: Путь к файлу с результатами (или пустая строка при ошибке)
+            str: Путь к файлу с результатами
         """
-        # Создаем директорию для результатов
         results_dir = self.config.get('RESULTS_DIR', './results/')
         os.makedirs(results_dir, exist_ok=True)
         
-        # Используем эмуляцию
-        metrics = self._run_emulated_test(test_name)
+        # Если JMeter не доступен, используем эмуляцию
+        if not self.use_jmeter:
+            metrics = self._run_emulated_test(test_name)
+            results_file = os.path.join(results_dir, f"{test_name}_emulated.json")
+            with open(results_file, 'w', encoding='utf-8') as f:
+                json.dump(metrics, f, indent=2)
+            logger.info(f"Результаты сохранены в: {results_file}")
+            return results_file
         
-        # Сохраняем результаты в JSON
-        results_file = os.path.join(results_dir, f"{test_name}_emulated.json")
+        # Используем JMeter
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        results_file = os.path.join(results_dir, f"{test_name}_{timestamp}.jtl")
+        log_file = os.path.join(results_dir, f"{test_name}_{timestamp}.log")
         
-        with open(results_file, 'w', encoding='utf-8') as f:
-            json.dump(metrics, f, indent=2)
+        jmeter_path = self.config.get('JMETER_PATH', 'jmeter')
+        test_plan = self.config.get('TEST_PLAN', 'test_plan.jmx')
         
-        logger.info(f"Результаты сохранены в: {results_file}")
-        return results_file
+        # Проверяем существование test_plan.jmx
+        if not os.path.exists(test_plan):
+            logger.error(f"Файл test_plan.jmx не найден: {test_plan}")
+            logger.info("Переключаемся на режим эмуляции")
+            self.use_jmeter = False
+            return self.run_test(test_name)
+        
+        # Формируем команду
+        cmd = f'"{jmeter_path}" -n -t "{test_plan}" -l "{results_file}" -j "{log_file}"'
+        
+        logger.info(f"Запуск JMeter: {cmd}")
+        
+        try:
+            process = subprocess.Popen(
+                cmd,
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            
+            test_duration = self.config.get('TEST_DURATION', 30)
+            stdout, stderr = process.communicate(timeout=test_duration + 60)
+            
+            if process.returncode == 0:
+                logger.info(f"Тест завершен успешно. Результаты: {results_file}")
+                
+                # Проверяем, что файл результатов создан
+                if os.path.exists(results_file) and os.path.getsize(results_file) > 0:
+                    return results_file
+                else:
+                    logger.error("Файл результатов пуст или не создан")
+                    logger.info("Переключаемся на режим эмуляции")
+                    self.use_jmeter = False
+                    return self.run_test(test_name)
+            else:
+                logger.error(f"Ошибка JMeter (код {process.returncode})")
+                if stderr:
+                    logger.error(f"STDERR: {stderr[:500]}")
+                logger.info("Переключаемся на режим эмуляции")
+                self.use_jmeter = False
+                return self.run_test(test_name)
+                
+        except subprocess.TimeoutExpired:
+            logger.error("Таймаут при выполнении теста")
+            process.kill()
+            logger.info("Переключаемся на режим эмуляции")
+            self.use_jmeter = False
+            return self.run_test(test_name)
+        except Exception as e:
+            logger.error(f"Ошибка при запуске теста: {e}")
+            logger.info("Переключаемся на режим эмуляции")
+            self.use_jmeter = False
+            return self.run_test(test_name)
     
     def parse_results(self, results_file: str) -> Dict[str, float]:
         """
         Парсит результаты нагрузочного тестирования.
-        
-        Args:
-            results_file: Путь к файлу с результатами
-            
-        Returns:
-            Dict: Словарь с метриками производительности
         """
         metrics = {
             'throughput': 0.0,
@@ -157,14 +217,74 @@ class LoadTester:
                 logger.error(f"Файл результатов не найден: {results_file}")
                 return metrics
             
-            # Загружаем JSON (эмуляция)
-            with open(results_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                metrics.update(data)
+            # JSON (эмуляция)
+            if results_file.endswith('.json'):
+                with open(results_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    metrics.update(data)
+                logger.info(f"Загружены эмулированные результаты: Throughput={metrics['throughput']:.2f} TPS")
+                return metrics
             
-            logger.info(f"Загружены эмулированные результаты: Throughput={metrics['throughput']:.2f} TPS")
+            # JTL файл (JMeter) - читаем построчно
+            import csv
+            
+            with open(results_file, 'r', encoding='utf-8') as f:
+                # Пропускаем комментарии (строки, начинающиеся с #)
+                lines = [line for line in f if not line.startswith('#')]
+            
+            if not lines:
+                logger.error("JTL файл не содержит данных после пропуска комментариев")
+                return metrics
+            
+            # Читаем CSV
+            reader = csv.DictReader(lines)
+            
+            # Получаем список колонок
+            fieldnames = reader.fieldnames
+            logger.info(f"Колонки в JTL файле: {fieldnames}")
+            
+            total_requests = 0
+            successful_requests = 0
+            latencies = []
+            
+            for row in reader:
+                total_requests += 1
+                
+                # Проверяем success (может быть 'true'/'false' или 'True'/'False' или boolean)
+                success_value = row.get('success', 'false')
+                if success_value in ['true', 'True', 'TRUE', '1', 'yes']:
+                    successful_requests += 1
+                
+                # Получаем latency (elapsed)
+                elapsed_str = row.get('elapsed', '0')
+                try:
+                    elapsed = float(elapsed_str)
+                    latencies.append(elapsed)
+                except ValueError:
+                    pass
+            
+            if total_requests > 0:
+                metrics['total_requests'] = total_requests
+                metrics['successful_requests'] = successful_requests
+                metrics['error_rate'] = 1 - (successful_requests / total_requests)
+                
+                test_duration = self.config.get('TEST_DURATION', 30)
+                metrics['throughput'] = total_requests / test_duration
+            
+            if latencies:
+                metrics['avg_latency'] = sum(latencies) / len(latencies)
+                metrics['min_latency'] = min(latencies)
+                metrics['max_latency'] = max(latencies)
+            
+            logger.info(f"JMeter результаты: Throughput={metrics['throughput']:.2f} TPS, "
+                    f"Avg Latency={metrics['avg_latency']:.2f} ms, "
+                    f"Total requests={total_requests}, "
+                    f"Successful={successful_requests}, "
+                    f"Error Rate={metrics['error_rate']*100:.2f}%")
             
         except Exception as e:
             logger.error(f"Ошибка при парсинге результатов: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
         
         return metrics

@@ -81,8 +81,8 @@ DOCKER_CONFIG = {
 
 # Параметры нагрузочного тестирования
 JMETER_CONFIG = {
-    'JMETER_PATH': 'jmeter',  # или полный путь к jmeter.bat
-    'TEST_PLAN': os.path.join(PROJECT_ROOT, 'test_plan.jmx'),
+    'JMETER_PATH': 'D:/Program Files/apache-jmeter-5.6.3/bin/jmeter.bat',  # или полный путь к jmeter.bat
+    'TEST_PLAN': os.path.join(PROJECT_ROOT, 'test_plan.jmx'),  # ПОЛНЫЙ ПУТЬ!
     'RESULTS_DIR': os.path.join(PROJECT_ROOT, 'results/'),
     'TEST_DURATION': 30,       # seconds
     'NUM_THREADS': 10,         # количество виртуальных пользователей
