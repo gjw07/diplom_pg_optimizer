@@ -66,7 +66,7 @@ def run_experiment():
         
         # 5. Запуск базового теста
         logger.info("=" * 70)
-        logger.info("Этап 5: Запуск теста с базовой конфигурацией (Baseline)")
+        logger.info("Этап 5: Запуск теста с базовой конфигурацией")
         baseline_results = orchestrator.run_baseline_test()
         
         # 6. Запуск оптимизации
@@ -97,6 +97,23 @@ def run_experiment():
         logger.info("=" * 70)
         logger.info("Этап 9: Очистка ресурсов")
         orchestrator.cleanup()
+
+        logger.info("Сохранение отчетов...")
+        report_file = orchestrator.save_all_reports(
+            baseline_results,
+            optimization_results,
+            validation_results
+        )
+        
+        logger.info(f"Полный отчет сохранен в: {report_file}")
+        logger.info(f"Все результаты доступны в папке: {config.PATHS['RESULTS_DIR']}logs/")
+
+        logger.info("Запуск графического вьювера результатов...")
+        try:
+            from pg_optimizer.results_viewer import launch_viewer
+            launch_viewer()
+        except Exception as e:
+            logger.error(f"Не удалось запустить вьювер: {e}")
         
         logger.info("=" * 70)
         logger.info("ЭКСПЕРИМЕНТ УСПЕШНО ЗАВЕРШЕН")

@@ -26,9 +26,8 @@ class LoadTester:
             config: Конфигурация JMeter из config.py
         """
         self.config = config
-        # ПРИНУДИТЕЛЬНО ИСПОЛЬЗУЕМ JMeter (раскомментируйте нужную строку)
-        # self.use_jmeter = self._check_jmeter()  # автоматическая проверка
-        self.use_jmeter = True  # ПРИНУДИТЕЛЬНО ВКЛЮЧАЕМ JMETER
+        self.use_jmeter = self._check_jmeter()  # автоматическая проверка
+        # self.use_jmeter = True  # ПРИНУДИТЕЛЬНО ВКЛЮЧАЕМ JMETER
         
         if self.use_jmeter:
             logger.info("LoadTester инициализирован с использованием JMeter")

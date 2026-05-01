@@ -11,6 +11,7 @@ import logging
 
 # Относительный импорт
 from . import config
+from .logger_config import get_logger, ExperimentLogger
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,8 @@ class OptimizationOrchestrator:
         
         # Инициализируем CSV файл для записи результатов
         self.results_file = self._init_results_file()
+        self.exp_logger = get_logger()
+        self.exp_logger.log("Инициализация оркестратора оптимизации")
         
         logger.info("OptimizationOrchestrator инициализирован")
     
@@ -67,6 +70,7 @@ class OptimizationOrchestrator:
     
     def evaluate_individual(self, individual: list) -> tuple:
         """Оценивает одну особь (конфигурацию) на реальной системе."""
+        self.exp_logger.log(f"Начало оценки особи...")
         # Преобразуем индивидуум в конфигурацию
         indiv_config = self.ga.individual_to_config(individual)
         
@@ -105,6 +109,14 @@ class OptimizationOrchestrator:
                               load_metrics, system_metrics, indiv_config)
             
             logger.info(f"Фитнес для конфигурации: {fitness:.3f}")
+            self.exp_logger.log_evaluation(
+            len(self.ga.generation_stats), 
+            0,  # individual_id можно добавить
+            fitness, 
+            load_metrics, 
+            indiv_config
+            )
+        
             return (fitness,)
             
         except Exception as e:
@@ -235,3 +247,31 @@ class OptimizationOrchestrator:
         """Очищает ресурсы (останавливает контейнер)."""
         logger.info("Очистка ресурсов")
         self.db.stop_container()
+
+    def save_all_reports(self, baseline_results, optimization_results, validation_results):
+        """Сохраняет все отчеты по окончании эксперимента"""
+        
+        # Сохраняем CSV лог
+        self.exp_logger.save_csv_log()
+        
+        # Сохраняем Markdown отчет
+        report_file = self.exp_logger.save_markdown_report(
+            baseline_results,
+            optimization_results,
+            validation_results,
+            self.ga.generation_stats
+        )
+        
+        # Сохраняем JSON сводку
+        summary = {
+            'session_id': self.exp_logger.session_id,
+            'baseline': baseline_results,
+            'best_config': optimization_results.get('best_config'),
+            'best_fitness': optimization_results.get('best_fitness'),
+            'validation': validation_results,
+            'generations': len(self.ga.generation_stats),
+            'total_evaluations': len(self.ga.generation_stats) * self.ga.ga_config['POPULATION_SIZE']
+        }
+        self.exp_logger.save_json_summary(summary)
+        
+        return report_file
