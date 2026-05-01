@@ -61,11 +61,11 @@ OPTIMIZABLE_PARAMS = {
 
 # Параметры генетического алгоритма
 GA_CONFIG = {
-    'POPULATION_SIZE': 10,      # Размер популяции
-    'GENERATIONS': 5,           # Количество поколений
-    'CXPB': 0.7,                # Вероятность скрещивания (crossover probability)
-    'MUTPB': 0.2,               # Вероятность мутации (mutation probability)
-    'TOURNSIZE': 3,             # Размер турнира для отбора
+    'POPULATION_SIZE': 8,   # было 3
+    'GENERATIONS': 5,       # было 3
+    'CXPB': 0.7,
+    'MUTPB': 0.2,
+    'TOURNSIZE': 3,
 }
 
 # Параметры Docker
@@ -91,7 +91,7 @@ JMETER_CONFIG = {
 
 # Параметры фитнес-функции
 FITNESS_CONFIG = {
-    'TARGET_TP': 1000,         # Целевая пропускная способность (TPS)
+    'TARGET_TP': 7000,         # Целевая пропускная способность (TPS)
     'MAX_LATENCY': 100,        # Максимально допустимая задержка (ms)
     'CPU_WEIGHT': 0.2,         # Вес CPU в фитнес-функции
     'IO_WEIGHT': 0.1,          # Вес I/O в фитнес-функции

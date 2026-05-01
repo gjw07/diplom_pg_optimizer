@@ -146,27 +146,29 @@ class OptimizationOrchestrator:
             writer.writerow(row)
     
     def run_baseline_test(self) -> Dict:
-        """Запускает тест с базовой (стандартной) конфигурацией."""
         logger.info("Запуск теста с базовой конфигурацией")
         
-        # Используем стандартную конфигурацию PostgreSQL
         baseline_config = {
-            'shared_buffers': 128,
-            'work_mem': 4,
+            'shared_buffers': 1024,
+            'work_mem': 3,
             'maintenance_work_mem': 64,
             'random_page_cost': 4.0,
             'effective_cache_size': 512,
             'checkpoint_timeout': 300
         }
         
-        # Применяем конфигурацию
         self.db.apply_config(baseline_config)
         self.db.restart_db()
         
-        # Запускаем тест
         results_file = self.load_tester.run_test("baseline")
         load_metrics = self.load_tester.parse_results(results_file)
         system_metrics = self.metrics.collect_system_metrics()
+        
+        baseline_tp = load_metrics.get('throughput', 0)
+        baseline_latency = load_metrics.get('avg_latency', 100)
+        
+        # Устанавливаем baseline в MetricsCalculator
+        self.metrics.set_baseline(baseline_tp, baseline_latency)
         
         baseline_results = {
             'config': baseline_config,
@@ -174,11 +176,10 @@ class OptimizationOrchestrator:
             'system_metrics': system_metrics
         }
         
-        # Сохраняем результаты
         with open(f"{config.PATHS['RESULTS_DIR']}baseline.json", 'w', encoding='utf-8') as f:
             json.dump(baseline_results, f, indent=2)
         
-        logger.info(f"Базовая конфигурация: Throughput={load_metrics.get('throughput', 0):.2f} TPS")
+        logger.info(f"Базовая конфигурация: Throughput={baseline_tp:.2f} TPS, Latency={baseline_latency:.2f}ms")
         
         return baseline_results
     

@@ -26,8 +26,8 @@ class LoadTester:
             config: Конфигурация JMeter из config.py
         """
         self.config = config
-        self.use_jmeter = self._check_jmeter()  # автоматическая проверка
-        # self.use_jmeter = True  # ПРИНУДИТЕЛЬНО ВКЛЮЧАЕМ JMETER
+        # self.use_jmeter = self._check_jmeter()  # автоматическая проверка
+        self.use_jmeter = True  # ПРИНУДИТЕЛЬНО ВКЛЮЧАЕМ JMETER
         
         if self.use_jmeter:
             logger.info("LoadTester инициализирован с использованием JMeter")
@@ -72,44 +72,63 @@ class LoadTester:
     
     def _run_emulated_test(self, test_name: str) -> Dict[str, float]:
         """
-        Запускает эмулированный нагрузочный тест (без JMeter).
-        
-        Args:
-            test_name: Имя теста
-            
-        Returns:
-            Dict: Эмулированные метрики производительности
+        Запускает детерминированный эмулированный нагрузочный тест.
+        Качество конфигурации зависит от того, насколько параметры
+        близки к «идеальным» значениям.
         """
         logger.info(f"Запуск эмулированного теста: {test_name}")
         
         test_duration = self.config.get('TEST_DURATION', 30)
-        time.sleep(min(test_duration, 3))
+        time.sleep(1)  # небольшая пауза для имитации
         
-        # Генерируем случайные метрики
-        base_throughput = random.uniform(800, 1200)
-        base_latency = random.uniform(10, 50)
-        error_rate = random.uniform(0, 0.05)
+        # Получаем текущую конфигурацию (нужно передать из orchestrator)
+        # Временное решение — используем сохранённые значения
+        if not hasattr(self, '_current_config'):
+            # Если конфигурация не передана, используем значения по умолчанию
+            self._current_config = {
+                'shared_buffers': 2048,
+                'work_mem': 32,
+                'random_page_cost': 1.5
+            }
         
-        # Имитируем улучшение с каждым тестом (для демонстрации сходимости)
-        if hasattr(self, '_call_count'):
-            self._call_count += 1
-            improvement = min(self._call_count * 0.03, 0.4)
-            base_throughput = base_throughput * (1 + improvement)
-            base_latency = base_latency * (1 - improvement * 0.5)
-        else:
-            self._call_count = 1
+        config = self._current_config
+        
+        # Идеальные значения параметров (эмпирически подобранные)
+        ideal_config = {
+            'shared_buffers': 2048,      # 2 GB
+            'work_mem': 32,              # 32 MB
+            'maintenance_work_mem': 512, # 512 MB
+            'random_page_cost': 1.1,     # для SSD
+            'effective_cache_size': 8192, # 8 GB
+            'checkpoint_timeout': 300
+        }
+        
+        # Вычисляем "качество" конфигурации (0-1)
+        quality = 1.0
+        for param, ideal_value in ideal_config.items():
+            if param in config:
+                current = config[param]
+                if ideal_value != 0:
+                    # Относительное отклонение
+                    deviation = abs(current - ideal_value) / ideal_value
+                    quality *= (1 - min(deviation, 1.0) * 0.3)
+        
+        # Чем выше quality, тем выше throughput и ниже latency
+        base_throughput = 500 + quality * 700  # от 500 до 1200 TPS
+        base_latency = 80 - quality * 60       # от 80 до 20 ms
+        error_rate = 0.05 * (1 - quality)      # ошибки только при плохих конфигурациях
         
         metrics = {
             'throughput': base_throughput,
             'avg_latency': base_latency,
-            'min_latency': base_latency * 0.5,
-            'max_latency': base_latency * 2,
+            'min_latency': base_latency * 0.7,
+            'max_latency': base_latency * 1.5,
             'error_rate': error_rate,
             'total_requests': int(base_throughput * test_duration),
             'successful_requests': int(base_throughput * test_duration * (1 - error_rate))
         }
         
-        logger.info(f"Эмулированный тест завершен. Throughput={metrics['throughput']:.2f} TPS")
+        logger.info(f"Эмулированный тест завершен. Quality={quality:.2f}, Throughput={metrics['throughput']:.2f} TPS")
         return metrics
     
     def run_test(self, test_name: str = "test") -> str:
