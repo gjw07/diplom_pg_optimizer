@@ -45,6 +45,14 @@ class GeneticAlgorithmEngine:
         self._setup_genetic_operators()
         
         self.generation_stats = []
+        
+        # ================================================================
+        # ДОБАВЛЕНО: Хранение лучшей особи за всю историю
+        # ================================================================
+        self.best_ever_individual = None
+        self.best_ever_fitness = -float('inf')
+        self.best_ever_generation = -1
+        
         logger.info("GeneticAlgorithmEngine инициализирован")
     
     def _create_individual(self) -> list:
@@ -93,6 +101,21 @@ class GeneticAlgorithmEngine:
         self.toolbox.register("select", 
                               tools.selTournament, 
                               tournsize=self.ga_config['TOURNSIZE'])
+    
+    def _update_best_ever(self, individual, generation: int):
+        """
+        Обновляет лучшую особь за всю историю, если текущая лучше.
+        
+        Args:
+            individual: Особь для проверки
+            generation: Текущее поколение
+        """
+        fitness_value = individual.fitness.values[0]
+        if fitness_value > self.best_ever_fitness:
+            self.best_ever_individual = individual
+            self.best_ever_fitness = fitness_value
+            self.best_ever_generation = generation
+            logger.info(f"🎯 НОВАЯ ЛУЧШАЯ ОСОБЬ в поколении {generation}: fitness={fitness_value:.4f}")
     
     def _custom_crossover(self, ind1: list, ind2: list) -> Tuple[list, list]:
         """
@@ -205,7 +228,7 @@ class GeneticAlgorithmEngine:
             generations: Количество поколений (если None, берется из конфига)
             
         Returns:
-            Tuple[list, object]: Лучший индивидуум и лог статистики
+            Tuple[list, object]: Лучший индивидуум за ВСЮ ИСТОРИЮ и лог статистики
         """
         if generations is None:
             generations = self.ga_config['GENERATIONS']
@@ -228,6 +251,12 @@ class GeneticAlgorithmEngine:
         fitnesses = list(map(self.toolbox.evaluate, pop))
         for ind, fit in zip(pop, fitnesses):
             ind.fitness.values = fit
+        
+        # ================================================================
+        # ДОБАВЛЕНО: Обновляем лучшую особь после оценки начальной популяции
+        # ================================================================
+        for ind in pop:
+            self._update_best_ever(ind, 0)
         
         # Собираем статистику
         record = stats.compile(pop)
@@ -261,6 +290,12 @@ class GeneticAlgorithmEngine:
             combined = sorted(combined, key=lambda x: x.fitness.values[0], reverse=True)
             pop = combined[:self.ga_config['POPULATION_SIZE']]
             
+            # ================================================================
+            # ДОБАВЛЕНО: Обновляем лучшую особь после каждого поколения
+            # ================================================================
+            for ind in pop:
+                self._update_best_ever(ind, gen)
+            
             # Собираем статистику
             record = stats.compile(pop)
             logbook.record(gen=gen, evals=len(invalid_ind), **record)
@@ -275,10 +310,35 @@ class GeneticAlgorithmEngine:
                 'std_fitness': record['std']
             })
         
-        # Находим лучшего индивидуума
-        best_individual = tools.selBest(pop, 1)[0]
-        best_fitness = best_individual.fitness.values[0]
+        # ================================================================
+        # ИСПРАВЛЕНО: Возвращаем лучшую особь за ВСЮ ИСТОРИЮ, а не из последнего поколения
+        # ================================================================
+        logger.info("=" * 60)
+        logger.info(f"ОПТИМИЗАЦИЯ ЗАВЕРШЕНА")
+        logger.info(f"Лучшая особь за всю историю:")
+        logger.info(f"  Поколение: {self.best_ever_generation}")
+        logger.info(f"  Fitness: {self.best_ever_fitness:.4f}")
+        logger.info(f"  Конфигурация: {self.individual_to_config(self.best_ever_individual)}")
+        logger.info("=" * 60)
         
-        logger.info(f"Оптимизация завершена. Лучший фитнес: {best_fitness}")
+        return self.best_ever_individual, logbook
+    
+    def get_best_ever_config(self) -> Dict[str, Any]:
+        """
+        Возвращает лучшую конфигурацию за всю историю.
         
-        return best_individual, logbook
+        Returns:
+            Dict: Лучшая конфигурация параметров
+        """
+        if self.best_ever_individual is None:
+            return {}
+        return self.individual_to_config(self.best_ever_individual)
+    
+    def get_best_ever_fitness_value(self) -> float:
+        """
+        Возвращает значение фитнеса лучшей особи за всю историю.
+        
+        Returns:
+            float: Значение фитнеса
+        """
+        return self.best_ever_fitness

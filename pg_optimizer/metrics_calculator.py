@@ -53,65 +53,36 @@ class MetricsCalculator:
         return metrics
     
     def calculate_fitness(self, load_test_metrics: Dict[str, float],
-                         system_metrics: Dict[str, float]) -> float:
-        """
-        Вычисляет фитнес-функцию.
-        
-        ПРОСТАЯ И ПОНЯТНАЯ ФОРМУЛА:
-        
-        fitness = (throughput / baseline_throughput) * 0.6
-                + (baseline_latency / latency) * 0.3
-                - (cpu / 100) * 0.1
-        
-        Если нет baseline, используется целевая TPS = 1000
-        """
+                        system_metrics: Dict[str, float]) -> float:
         tp = load_test_metrics.get('throughput', 0)
         latency = load_test_metrics.get('avg_latency', 100)
         error_rate = load_test_metrics.get('error_rate', 0)
         cpu = system_metrics.get('cpu_percent', 50)
         
-        # ================================================================
-        # ШТРАФ ЗА ОШИБКИ (конфигурация с ошибками неприемлема)
-        # ================================================================
-        if error_rate > 0.03:  # больше 1% ошибок
-            logger.warning(f"Конфигурация ОТБРАКОВАНА: error_rate={error_rate*100:.2f}% > 1%")
+        if error_rate > 0.05:
             return 0.0
         
-        # ================================================================
-        # РАСЧЕТ ФИТНЕСА
-        # ================================================================
-        
-        # 1. Пропускная способность (вес 0.6)
+        # Если есть baseline — используем относительную оценку
         if self.baseline_throughput is not None and self.baseline_throughput > 0:
             tp_score = tp / self.baseline_throughput
-        else:
-            tp_target = self.config.get('TARGET_TP', 1000)
-            tp_score = tp / tp_target
-        
-        # Ограничиваем, чтобы не было бесконечных значений
-        # tp_score = min(tp_score, 1.5)
-        
-        # 2. Задержка (вес 0.3)
-        if self.baseline_latency is not None and self.baseline_latency > 0:
             latency_score = self.baseline_latency / max(latency, 0.1)
         else:
-            max_latency = self.config.get('MAX_LATENCY', 100)
-            latency_score = max_latency / max(latency, 0.1)
+            tp_target = self.config.get('TARGET_TP', 150)
+            tp_score = tp / tp_target
+            latency_score = self.config.get('MAX_LATENCY', 100) / max(latency, 0.1)
         
-        latency_score = min(latency_score, 1.5)
+        # Ограничиваем
+        tp_score = min(tp_score, 2.0)
+        latency_score = min(latency_score, 2.0)
         
-        # 3. CPU (штраф, вес 0.1)
         cpu_penalty = cpu / 100.0
         
-        # Итоговая формула
         fitness = (tp_score * 0.6) + (latency_score * 0.3) - (cpu_penalty * 0.1)
         
-        # Ограничиваем фитнес разумными пределами
-        fitness = max(fitness, 0.0)
-        fitness = min(fitness, 1.5)
+        # НЕ ОГРАНИЧИВАЕМ максимум, чтобы алгоритм видел улучшения
+        fitness = max(fitness, 0.0)  # только минимум
         
-        logger.info(f"Fitness: tp={tp:.2f} (score={tp_score:.3f}), "
-                   f"lat={latency:.2f} (score={latency_score:.3f}), "
-                   f"cpu={cpu:.1f}% -> fitness={fitness:.3f}")
+        logger.info(f"Fitness: tp={tp:.2f}({tp_score:.3f}), lat={latency:.2f}({latency_score:.3f}), "
+                    f"cpu={cpu:.1f}% -> fitness={fitness:.3f}")
         
         return fitness

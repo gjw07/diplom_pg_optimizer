@@ -447,7 +447,6 @@ class ResultsViewer:
     
     def show_no_data_message(self):
         """Показать сообщение об отсутствии данных"""
-        # Очищаем все текстовые поля
         try:
             self.config_details.delete(1.0, tk.END)
             self.config_details.insert(tk.END, "Нет данных для отображения.\n\n")
@@ -482,12 +481,9 @@ class ResultsViewer:
         
         if file_path:
             self.current_csv_file = Path(file_path)
-            # Если пользователь открыл файл из другой папки — считаем её новой папкой результатов
-            # и пробуем догрузить baseline/validation/summary/logs рядом с CSV.
             self.results_dir = self.current_csv_file.parent
 
             if self.load_csv_data(self.current_csv_file):
-                # Пере-загружаем “сопутствующие” файлы относительно новой папки результатов
                 self.current_json_file = None
                 self.summary_data = None
                 self.baseline_data = None
@@ -514,17 +510,38 @@ class ResultsViewer:
             else:
                 messagebox.showerror("Ошибка", "Не удалось загрузить файл")
     
+    def _calculate_fitness_from_metrics(self, load_metrics , system_metrics) -> float:
+        """Вычисляет fitness на основе метрик"""
+        tp = load_metrics.get('throughput', 0)
+        latency = load_metrics.get('avg_latency', 100)
+        error_rate = load_metrics.get('error_rate', 0)
+        cpu = system_metrics.get('cpu_percent', 50)
+        
+        if self.baseline_data:
+            baseline_tp = self.baseline_data.get('load_metrics', {}).get('throughput', 1)
+            baseline_latency = self.baseline_data.get('load_metrics', {}).get('avg_latency', 1)
+            tp_score = tp / baseline_tp if baseline_tp > 0 else 0
+            latency_score = baseline_latency / max(latency, 0.1)
+        else:
+            tp_score = tp / 150
+            latency_score = 100 / max(latency, 0.1)
+        
+        tp_score = min(tp_score, 2.0)
+        latency_score = min(latency_score, 2.0)
+        cpu_penalty = cpu / 100.0
+        
+        fitness = (tp_score * 0.6) + (latency_score * 0.3) - (cpu_penalty * 0.1)
+        return max(fitness, 0.0)
+    
     def prepare_best_configs(self):
         """Подготовка списка лучших конфигураций"""
         self.best_configs = []
         
         if self.current_data is not None and 'fitness' in self.current_data.columns:
-            # Сортируем по фитнесу и берем топ-5
             top_configs = self.current_data.nlargest(5, 'fitness')
             
             for idx, row in top_configs.iterrows():
                 config = {}
-                # Извлекаем параметры конфигурации
                 param_cols = [col for col in self.current_data.columns 
                              if col not in ['generation', 'individual', 'fitness', 
                                           'throughput', 'avg_latency', 'error_rate', 
@@ -545,8 +562,31 @@ class ResultsViewer:
                     'rank': len(self.best_configs) + 1,
                     'config': config,
                     'metrics': metrics,
-                    'generation': row['generation']
+                    'generation': row['generation'],
+                    'is_validation': False
                 })
+        
+        # Добавляем конфигурацию из валидации (шаг 7)
+        if self.validation_data:
+            val_config = self.validation_data.get('config', {})
+            val_metrics = self.validation_data.get('load_metrics', {})
+            val_system = self.validation_data.get('system_metrics', {})
+            
+            validation_entry = {
+                'rank': '⭐ ВАЛИДАЦИЯ',
+                'config': val_config,
+                'metrics': {
+                    'fitness': self._calculate_fitness_from_metrics(val_metrics, val_system),
+                    'throughput': val_metrics.get('throughput', 0),
+                    'avg_latency': val_metrics.get('avg_latency', 0),
+                    'error_rate': val_metrics.get('error_rate', 0),
+                    'cpu_usage': val_system.get('cpu_percent', 0)
+                },
+                'generation': 'Валидация',
+                'is_validation': True
+            }
+            
+            self.best_configs.insert(0, validation_entry)
     
     def update_ui(self):
         """Обновление пользовательского интерфейса"""
@@ -574,10 +614,6 @@ class ResultsViewer:
             return "—"
 
     def _compute_deltas_vs_baseline(self, metrics):
-        """
-        Возвращает (ΔTP%, ΔLat%, ΔErr%) относительно baseline.
-        Для Latency/Error: плюс означает улучшение (т.к. уменьшение лучше).
-        """
         if not self.baseline_data:
             return None, None, None
 
@@ -672,20 +708,21 @@ class ResultsViewer:
         
         for config in self.best_configs:
             metrics = config['metrics']
-            display_text = f"#{config['rank']} | Fitness: {metrics['fitness']:.4f} | TP: {metrics['throughput']:.0f} TPS"
-            self.config_listbox.insert(tk.END, display_text)
+            if config.get('is_validation', False):
+                display_text = f"⭐ {config['rank']} | Fitness: {metrics['fitness']:.4f} | TP: {metrics['throughput']:.0f} TPS ⭐"
+                self.config_listbox.insert(tk.END, display_text)
+            else:
+                display_text = f"#{config['rank']} | Fitness: {metrics['fitness']:.4f} | TP: {metrics['throughput']:.0f} TPS"
+                self.config_listbox.insert(tk.END, display_text)
         
-        # Автоматически выбираем лучшую конфигурацию
         if self.best_configs:
             self.config_listbox.selection_set(0)
             self.show_config_details(self.best_configs[0])
     
     def on_config_select(self, event):
-        """Обработчик выбора конфигурации"""
         selection = self.config_listbox.curselection()
         if not selection:
             return
-        
         idx = selection[0]
         if idx < len(self.best_configs):
             self.show_config_details(self.best_configs[idx])
@@ -694,19 +731,19 @@ class ResultsViewer:
         """Отображение деталей выбранной конфигурации"""
         self.config_details.delete(1.0, tk.END)
         
-        # Заголовок
-        self.config_details.insert(tk.END, f"КОНФИГУРАЦИЯ #{config_data['rank']}\n")
-        self.config_details.insert(tk.END, "="*50 + "\n\n")
+        if config_data.get('is_validation', False):
+            self.config_details.insert(tk.END, f"⭐ ЛУЧШАЯ КОНФИГУРАЦИЯ (ПОСЛЕ ВАЛИДАЦИИ) ⭐\n")
+        else:
+            self.config_details.insert(tk.END, f"КОНФИГУРАЦИЯ #{config_data['rank']}\n")
+        self.config_details.insert(tk.END, "=" * 50 + "\n\n")
         
-        # Параметры
         self.config_details.insert(tk.END, "ПАРАМЕТРЫ PostgreSQL:\n")
-        self.config_details.insert(tk.END, "-"*30 + "\n")
+        self.config_details.insert(tk.END, "-" * 30 + "\n")
         for param, value in config_data['config'].items():
             self.config_details.insert(tk.END, f"  {param}: {value}\n")
         
-        # Метрики производительности
         self.config_details.insert(tk.END, "\nМЕТРИКИ ПРОИЗВОДИТЕЛЬНОСТИ:\n")
-        self.config_details.insert(tk.END, "-"*30 + "\n")
+        self.config_details.insert(tk.END, "-" * 30 + "\n")
         metrics = config_data['metrics']
         self.config_details.insert(tk.END, f"  Fitness: {metrics['fitness']:.4f}\n")
         self.config_details.insert(tk.END, f"  Throughput: {metrics['throughput']:.2f} TPS\n")
@@ -714,13 +751,14 @@ class ResultsViewer:
         self.config_details.insert(tk.END, f"  Error Rate: {metrics['error_rate']*100:.2f}%\n")
         self.config_details.insert(tk.END, f"  CPU Usage: {metrics['cpu_usage']:.1f}%\n")
         
-        # Информация о поколении
-        self.config_details.insert(tk.END, f"\nНайдена в поколении: {config_data['generation']}\n")
+        if config_data.get('is_validation', False):
+            self.config_details.insert(tk.END, f"\n✅ Получена после валидации (шаг 7)\n")
+        else:
+            self.config_details.insert(tk.END, f"\nНайдена в поколении: {config_data['generation']}\n")
         
-        # Анализ улучшений
         if self.baseline_data:
             self.config_details.insert(tk.END, "\nАНАЛИЗ УЛУЧШЕНИЙ ОТНОСИТЕЛЬНО BASELINE:\n")
-            self.config_details.insert(tk.END, "-"*30 + "\n")
+            self.config_details.insert(tk.END, "-" * 30 + "\n")
             
             baseline_tp = self.baseline_data.get('load_metrics', {}).get('throughput', 0)
             if baseline_tp > 0:
@@ -739,11 +777,9 @@ class ResultsViewer:
                     self.config_details.insert(tk.END, f"  - Увеличение задержки: {latency_change:+.1f}%\n")
     
     def copy_config_to_clipboard(self):
-        """Копирование конфигурации в буфер обмена"""
         selection = self.config_listbox.curselection()
         if not selection:
             return
-        
         idx = selection[0]
         if idx < len(self.best_configs):
             config = self.best_configs[idx]['config']
@@ -754,15 +790,12 @@ class ResultsViewer:
     
     def update_comparison_tab(self):
         """Обновление вкладки сравнения"""
-        # Очищаем фрейм
         for widget in self.comparison_frame.winfo_children():
             widget.destroy()
         
         if self.best_configs and self.baseline_data:
-            # Создаем график сравнения
             fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
             
-            # Сравнение метрик
             metrics_names = ['Throughput\n(TPS)', 'Avg Latency\n(ms)', 'Error Rate\n(%)']
             baseline_values = [
                 self.baseline_data.get('load_metrics', {}).get('throughput', 0),
@@ -791,10 +824,8 @@ class ResultsViewer:
             ax1.legend()
             ax1.grid(True, alpha=0.3)
             
-            # Радарная диаграмма
             categories = ['Throughput', 'Latency\n(inverse)', 'Error Rate\n(inverse)', 'Free CPU']
             
-            # Нормализация
             max_vals = [max(baseline_values[0], best_values[0]), 
                        max(baseline_values[1], best_values[1]),
                        100, 100]
@@ -834,10 +865,9 @@ class ResultsViewer:
             canvas.draw()
             canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
             
-            # Текстовое сравнение
             self.comparison_text.delete(1.0, tk.END)
             self.comparison_text.insert(tk.END, "СРАВНЕНИЕ С БАЗОВОЙ КОНФИГУРАЦИЕЙ\n")
-            self.comparison_text.insert(tk.END, "="*50 + "\n\n")
+            self.comparison_text.insert(tk.END, "=" * 50 + "\n\n")
             
             baseline_tp = baseline_values[0]
             best_tp = best_values[0]
@@ -864,11 +894,10 @@ class ResultsViewer:
             self.comparison_text.insert(tk.END, f"  Optimized: {best_err:.2f}%\n")
             self.comparison_text.insert(tk.END, f"  Изменение: {baseline_err - best_err:+.2f}%\n")
             
-            # Добавляем сравнение с валидацией если есть
             if self.validation_data:
-                self.comparison_text.insert(tk.END, "\n" + "="*50 + "\n")
+                self.comparison_text.insert(tk.END, "\n" + "=" * 50 + "\n")
                 self.comparison_text.insert(tk.END, "ВАЛИДАЦИЯ ЛУЧШЕЙ КОНФИГУРАЦИИ\n")
-                self.comparison_text.insert(tk.END, "="*50 + "\n")
+                self.comparison_text.insert(tk.END, "=" * 50 + "\n")
                 
                 val_tp = self.validation_data.get('load_metrics', {}).get('throughput', 0)
                 val_lat = self.validation_data.get('load_metrics', {}).get('avg_latency', 0)
@@ -882,7 +911,6 @@ class ResultsViewer:
     
     def update_detailed_analysis(self):
         """Обновление детального анализа"""
-        # Очищаем таблицу и текст
         for iid in self.param_tree.get_children():
             self.param_tree.delete(iid)
         self._param_row_map = {}
@@ -894,13 +922,11 @@ class ResultsViewer:
             self.analysis_text.insert(tk.END, "Загрузите CSV с результатами (и baseline.json рядом, если нужен расчёт Δ).\n")
             return
 
-        # Список параметров из топ-конфигов
         params = set()
         for cfg in self.best_configs:
             params.update((cfg.get("config") or {}).keys())
         params = sorted(params)
 
-        # Для каждого параметра показываем два “экстремума” среди ТОП-а: низкий и высокий
         for param in params:
             values = []
             for cfg in self.best_configs:
@@ -931,7 +957,6 @@ class ResultsViewer:
                 iid = self.param_tree.insert("", tk.END, values=row)
                 self._param_row_map[iid] = {"param": param, "mode": mode, "config_data": cfg}
 
-        # Текст-инструкция по умолчанию
         self.analysis_text.insert(tk.END, "Выбери строку слева, чтобы увидеть подробности.\n\n")
         self.analysis_text.insert(
             tk.END,
@@ -944,23 +969,24 @@ class ResultsViewer:
         )
     
     def update_evolution_graph(self):
-        """Обновление графика эволюции"""
+        """Обновление графика эволюции с целыми числами на оси X"""
         if self.current_data is None:
             return
         
-        # Очищаем фрейм
         for widget in self.evolution_frame.winfo_children():
             widget.destroy()
         
-        # Создаем график
         fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(12, 10))
         
-        # График сходимости
+        # График сходимости с целыми числами на оси X
         gen_stats = self.current_data.groupby('generation')['fitness'].agg(['mean', 'max', 'min']).reset_index()
+        generations = gen_stats['generation'].astype(int).values
         
-        ax1.plot(gen_stats['generation'], gen_stats['max'], 'b-', linewidth=2, label='Max fitness', marker='o')
-        ax1.plot(gen_stats['generation'], gen_stats['mean'], 'g--', linewidth=2, label='Mean fitness', marker='s')
-        ax1.fill_between(gen_stats['generation'], gen_stats['min'], gen_stats['max'], alpha=0.2, color='blue')
+        ax1.plot(generations, gen_stats['max'], 'b-', linewidth=2, label='Max fitness', marker='o')
+        ax1.plot(generations, gen_stats['mean'], 'g--', linewidth=2, label='Mean fitness', marker='s')
+        ax1.fill_between(generations, gen_stats['min'], gen_stats['max'], alpha=0.2, color='blue')
+        ax1.set_xticks(generations)
+        ax1.set_xticklabels([int(x) for x in generations])
         ax1.set_xlabel('Поколение')
         ax1.set_ylabel('Fitness')
         ax1.set_title('Сходимость генетического алгоритма')
@@ -970,8 +996,11 @@ class ResultsViewer:
         # График улучшения Throughput
         if 'throughput' in self.current_data.columns:
             tp_stats = self.current_data.groupby('generation')['throughput'].agg(['max', 'mean'])
-            ax2.plot(tp_stats.index, tp_stats['max'], 'r-', linewidth=2, label='Max TPS', marker='o')
-            ax2.plot(tp_stats.index, tp_stats['mean'], 'orange', linewidth=2, label='Mean TPS', marker='s')
+            tp_generations = tp_stats.index.astype(int).values
+            ax2.plot(tp_generations, tp_stats['max'], 'r-', linewidth=2, label='Max TPS', marker='o')
+            ax2.plot(tp_generations, tp_stats['mean'], 'orange', linewidth=2, label='Mean TPS', marker='s')
+            ax2.set_xticks(tp_generations)
+            ax2.set_xticklabels([int(x) for x in tp_generations])
             ax2.set_xlabel('Поколение')
             ax2.set_ylabel('Throughput (TPS)')
             ax2.set_title('Улучшение пропускной способности')
@@ -981,8 +1010,11 @@ class ResultsViewer:
         # График снижения Latency
         if 'avg_latency' in self.current_data.columns:
             lat_stats = self.current_data.groupby('generation')['avg_latency'].agg(['min', 'mean'])
-            ax3.plot(lat_stats.index, lat_stats['min'], 'purple', linewidth=2, label='Min latency', marker='o')
-            ax3.plot(lat_stats.index, lat_stats['mean'], 'pink', linewidth=2, label='Mean latency', marker='s')
+            lat_generations = lat_stats.index.astype(int).values
+            ax3.plot(lat_generations, lat_stats['min'], 'purple', linewidth=2, label='Min latency', marker='o')
+            ax3.plot(lat_generations, lat_stats['mean'], 'pink', linewidth=2, label='Mean latency', marker='s')
+            ax3.set_xticks(lat_generations)
+            ax3.set_xticklabels([int(x) for x in lat_generations])
             ax3.set_xlabel('Поколение')
             ax3.set_ylabel('Задержка (ms)')
             ax3.set_title('Снижение задержки')
@@ -996,8 +1028,11 @@ class ResultsViewer:
         for param in param_cols[:3]:
             if param in self.current_data.columns:
                 param_stats = self.current_data.groupby('generation')[param].mean()
-                ax4.plot(param_stats.index, param_stats.values, label=param, linewidth=2, marker='o')
+                param_generations = param_stats.index.astype(int).values
+                ax4.plot(param_generations, param_stats.values, label=param, linewidth=2, marker='o')
         
+        ax4.set_xticks(param_generations)
+        ax4.set_xticklabels([int(x) for x in param_generations])
         ax4.set_xlabel('Поколение')
         ax4.set_ylabel('Значение параметра')
         ax4.set_title('Эволюция параметров (средние значения)')
@@ -1046,15 +1081,15 @@ class ResultsViewer:
                 f.write(f"<h1>Отчет об оптимизации PostgreSQL</h1>\n")
                 f.write(f"<p><strong>Дата:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>\n\n")
                 
-                # Лучшие конфигурации
                 f.write("<h2>Лучшие найденные конфигурации</h2>\n")
                 f.write("<table>\n")
-                f.write("<tr><th>Ранг</th><th>Fitness</th><th>Throughput (TPS)</th><th>Latency (ms)</th><th>Error Rate (%)</th></table>\n")
+                f.write("<tr><th>Ранг</th><th>Fitness</th><th>Throughput (TPS)</th><th>Latency (ms)</th><th>Error Rate (%)</th></tr>\n")
                 
                 for config in self.best_configs:
                     metrics = config['metrics']
+                    rank_display = "⭐ ВАЛИДАЦИЯ" if config.get('is_validation', False) else str(config['rank'])
                     f.write(f"<tr>")
-                    f.write(f"<td>{config['rank']}</td>")
+                    f.write(f"<td>{rank_display}</td>")
                     f.write(f"<td>{metrics['fitness']:.4f}</td>")
                     f.write(f"<td>{metrics['throughput']:.2f}</td>")
                     f.write(f"<td>{metrics['avg_latency']:.2f}</td>")
@@ -1062,16 +1097,14 @@ class ResultsViewer:
                     f.write(f"</tr>\n")
                 f.write("</table>\n\n")
                 
-                # Детали лучшей конфигурации
                 best = self.best_configs[0]
                 f.write("<h2>Детали лучшей конфигурации</h2>\n")
-                f.write("</table>\n")
-                f.write(" hilab<th>Параметр</th><th>Значение</th></tr>\n")
+                f.write("<table>\n")
+                f.write("<tr><th>Параметр</th><th>Значение</th></tr>\n")
                 for param, value in best['config'].items():
                     f.write(f"<tr><td>{param}</td><td>{value}</td></tr>\n")
-                f.write("<tr>\n\n")
+                f.write("</table>\n\n")
                 
-                # Сравнение с baseline
                 if self.baseline_data:
                     f.write("<h2>Сравнение с базовой конфигурацией</h2>\n")
                     f.write("<table>\n")
