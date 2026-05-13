@@ -61,7 +61,7 @@ OPTIMIZABLE_PARAMS = {
 
 # Параметры генетического алгоритма
 GA_CONFIG = {
-    'POPULATION_SIZE': 8,   # было 3
+    'POPULATION_SIZE': 10,   # было 3
     'GENERATIONS': 5,       # было 3
     'CXPB': 0.7,
     'MUTPB': 0.2,
@@ -86,9 +86,11 @@ JMETER_CONFIG = {
     'RESULTS_DIR': os.path.join(PROJECT_ROOT, 'results/'),
     'TEST_DURATION': 30,       # seconds
     'NUM_THREADS': 10,         # количество виртуальных пользователей
-    'RAMP_UP': 5               # время наращивания нагрузки (сек)
+    'RAMP_UP': 5,              # время наращивания нагрузки (сек)
+    'USE_WORKLOAD_GENERATOR': True,  # <-- НОВЫЙ ПАРАМЕТР: использовать генератор сложных запросов
+    'WORKLOAD_PARALLEL': 4,          # <-- Количество параллельных потоков
+    'WORKLOAD_QUERY_MIX': 'mixed',   # <-- Тип нагрузки: 'oltp', 'olap', 'mixed'
 }
-
 # Параметры фитнес-функции
 FITNESS_CONFIG = {
     'TARGET_TP': 7000,         # Целевая пропускная способность (TPS)
@@ -105,4 +107,60 @@ PATHS = {
     'LOGS_DIR': './logs/',
     'CONFIGS_DIR': './configs/',
     'PLOTS_DIR': './plots/'
+}
+
+# Настройка схемы базы данных
+DATABASE_SCHEMA = {
+    # Уровень схемы: 'simple', 'medium', 'complex'
+    'LEVEL': 'simple',  # <-- МЕНЯЙТЕ ЗДЕСЬ для выбора схемы
+    
+    # Объём данных: 'small', 'medium', 'large'
+    'DATA_SIZE': 'small',  # <-- МЕНЯЙТЕ ЗДЕСЬ для выбора объёма
+    
+    # Доступные схемы
+    'SCHEMAS': {
+        'simple': {
+            'name': 'Простая схема',
+            'description': '2 таблицы: employees, departments'
+        },
+        'medium': {
+            'name': 'Средняя схема',
+            'description': '4 таблицы: employees, departments, projects, employee_projects'
+        },
+        'complex': {
+            'name': 'Сложная схема',
+            'description': '8+ таблиц: иерархия отделов, навыки, история зарплат'
+        }
+    },
+    
+    # Объёмы данных для каждой схемы
+    'DATA_VOLUMES': {
+        'small': {
+            'name': 'Маленький',
+            'employees': 50,
+            'customers': 100,
+            'products': 20,
+            'orders': 200,
+            'projects': 10,
+            'skills': 15
+        },
+        'medium': {
+            'name': 'Средний',
+            'employees': 200,
+            'customers': 500,
+            'products': 50,
+            'orders': 1000,
+            'projects': 20,
+            'skills': 25
+        },
+        'large': {
+            'name': 'Большой',
+            'employees': 1000,
+            'customers': 5000,
+            'products': 200,
+            'orders': 10000,
+            'projects': 50,
+            'skills': 40
+        }
+    }
 }

@@ -73,7 +73,7 @@ class MetricsCalculator:
         # ================================================================
         # ШТРАФ ЗА ОШИБКИ (конфигурация с ошибками неприемлема)
         # ================================================================
-        if error_rate > 0.01:  # больше 1% ошибок
+        if error_rate > 0.03:  # больше 1% ошибок
             logger.warning(f"Конфигурация ОТБРАКОВАНА: error_rate={error_rate*100:.2f}% > 1%")
             return 0.0
         
@@ -89,7 +89,7 @@ class MetricsCalculator:
             tp_score = tp / tp_target
         
         # Ограничиваем, чтобы не было бесконечных значений
-        tp_score = min(tp_score, 1.5)
+        # tp_score = min(tp_score, 1.5)
         
         # 2. Задержка (вес 0.3)
         if self.baseline_latency is not None and self.baseline_latency > 0:

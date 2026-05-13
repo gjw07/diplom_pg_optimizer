@@ -59,7 +59,8 @@ class DBController:
                     environment={
                         'POSTGRES_USER': self.config['POSTGRES_USER'],
                         'POSTGRES_PASSWORD': self.config['POSTGRES_PASSWORD'],
-                        'POSTGRES_DB': self.config['POSTGRES_DB']
+                        'POSTGRES_DB': self.config['POSTGRES_DB'],
+                        'POSTGRES_MAX_CONNECTIONS': '200' 
                     },
                     ports={'5432/tcp': self.config['PORT']},
                     volumes={

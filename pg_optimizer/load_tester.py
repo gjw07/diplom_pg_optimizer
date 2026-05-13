@@ -7,7 +7,11 @@ import time
 import logging
 import json
 import random
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
+import psycopg2
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+from pg_optimizer.test_queries import TestQueries
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +19,7 @@ logger = logging.getLogger(__name__)
 class LoadTester:
     """
     Класс для проведения нагрузочного тестирования.
-    Поддерживает JMeter или встроенную эмуляцию.
+    Автоматически определяет схему БД и использует соответствующие запросы.
     """
     
     def __init__(self, config: Dict[str, Any]):
@@ -26,200 +30,298 @@ class LoadTester:
             config: Конфигурация JMeter из config.py
         """
         self.config = config
-        # self.use_jmeter = self._check_jmeter()  # автоматическая проверка
-        self.use_jmeter = True  # ПРИНУДИТЕЛЬНО ВКЛЮЧАЕМ JMETER
+        self.use_jmeter = self._check_jmeter()
+        self.schema_level = None  # Будет определено при первом тесте
+        self.queries_module = None  # Будет загружен при определении схемы
         
         if self.use_jmeter:
             logger.info("LoadTester инициализирован с использованием JMeter")
         else:
-            logger.warning("JMeter не найден. Будет использован встроенный эмулятор нагрузки")
+            logger.info("LoadTester инициализирован с использованием встроенного генератора")
     
     def _check_jmeter(self) -> bool:
+        """Проверяет, доступен ли JMeter."""
+        jmeter_path = self.config.get('JMETER_PATH', 'jmeter')
+        if not os.path.exists(jmeter_path):
+            return False
+        return True
+    
+    def _detect_schema(self) -> str:
         """
-        Проверяет, доступен ли JMeter.
+        Определяет, какая схема БД используется.
+        Проверяет наличие характерных таблиц.
         
         Returns:
-            bool: True если JMeter доступен, False если нет
+            str: 'simple', 'medium' или 'complex'
         """
-        jmeter_path = self.config.get('JMETER_PATH', 'jmeter')
-        
-        # Проверяем, существует ли файл jmeter.bat
-        if not os.path.exists(jmeter_path):
-            logger.warning(f"Файл JMeter не найден по пути: {jmeter_path}")
-            return False
-        
-        # Пробуем запустить JMeter с проверкой версии
         try:
-            result = subprocess.run(
-                [jmeter_path, '--version'],
-                capture_output=True,
-                text=True,
-                timeout=10,
-                shell=True
-            )
-            if result.returncode == 0:
-                logger.info(f"JMeter найден и доступен: {jmeter_path}")
-                return True
+            conn = self._get_db_connection()
+            cursor = conn.cursor()
+            
+            # Проверяем наличие таблиц для разных схем
+            cursor.execute("""
+                SELECT table_name 
+                FROM information_schema.tables 
+                WHERE table_schema = 'public'
+            """)
+            tables = [row[0] for row in cursor.fetchall()]
+            cursor.close()
+            conn.close()
+            
+            logger.info(f"Обнаружены таблицы: {tables}")
+            
+            # Определяем схему по наличию таблиц
+            if 'projects' in tables and 'employee_projects' in tables:
+                if 'skills' in tables or 'locations' in tables:
+                    logger.info("Определена схема: COMPLEX")
+                    return 'complex'
+                else:
+                    logger.info("Определена схема: MEDIUM")
+                    return 'medium'
+            elif 'departments' in tables and 'employees' in tables:
+                logger.info("Определена схема: SIMPLE")
+                return 'simple'
             else:
-                logger.warning(f"JMeter вернул код ошибки: {result.returncode}")
-                return False
-        except subprocess.TimeoutExpired:
-            logger.warning("Таймаут при проверке JMeter")
-            return False
+                logger.warning("Не удалось определить схему, используем MEDIUM по умолчанию")
+                return 'medium'
+                
         except Exception as e:
-            logger.warning(f"Ошибка при проверке JMeter: {e}")
-            return False
+            logger.warning(f"Ошибка определения схемы: {e}, используем MEDIUM")
+            return 'medium'
     
-    def _run_emulated_test(self, test_name: str) -> Dict[str, float]:
+    def _load_queries_for_schema(self, schema_level: str):
         """
-        Запускает детерминированный эмулированный нагрузочный тест.
-        Качество конфигурации зависит от того, насколько параметры
-        близки к «идеальным» значениям.
+        Загружает запросы для соответствующей схемы.
+        
+        Args:
+            schema_level: 'simple', 'medium' или 'complex'
         """
-        logger.info(f"Запуск эмулированного теста: {test_name}")
+        if schema_level == 'simple':
+            from .schemas import simple_schema
+            self.queries_module = simple_schema
+        elif schema_level == 'complex':
+            from .schemas import complex_schema
+            self.queries_module = complex_schema
+        else:
+            from .schemas import medium_schema
+            self.queries_module = medium_schema
         
-        test_duration = self.config.get('TEST_DURATION', 30)
-        time.sleep(1)  # небольшая пауза для имитации
+        logger.info(f"Загружены запросы для схемы: {schema_level.upper()}")
+    
+    def _get_query(self, query_type: str = 'mixed') -> str:
+        """
+        Возвращает случайный запрос для текущей схемы.
         
-        # Получаем текущую конфигурацию (нужно передать из orchestrator)
-        # Временное решение — используем сохранённые значения
-        if not hasattr(self, '_current_config'):
-            # Если конфигурация не передана, используем значения по умолчанию
-            self._current_config = {
-                'shared_buffers': 2048,
-                'work_mem': 32,
-                'random_page_cost': 1.5
-            }
+        Args:
+            query_type: 'simple', 'medium', 'complex', 'very_complex', 'mixed'
         
-        config = self._current_config
+        Returns:
+            str: SQL-запрос
+        """
+        if self.queries_module is None:
+            # Определяем схему и загружаем запросы
+            self.schema_level = self._detect_schema()
+            self._load_queries_for_schema(self.schema_level)
         
-        # Идеальные значения параметров (эмпирически подобранные)
-        ideal_config = {
-            'shared_buffers': 2048,      # 2 GB
-            'work_mem': 32,              # 32 MB
-            'maintenance_work_mem': 512, # 512 MB
-            'random_page_cost': 1.1,     # для SSD
-            'effective_cache_size': 8192, # 8 GB
-            'checkpoint_timeout': 300
+        queries = self.queries_module.get_test_queries()
+        
+        if query_type == 'simple':
+            return random.choice(queries.get('simple', ["SELECT 1"]))
+        elif query_type == 'medium':
+            return random.choice(queries.get('medium', ["SELECT 1"]))
+        elif query_type == 'complex':
+            return random.choice(queries.get('complex', ["SELECT 1"]))
+        elif query_type == 'very_complex':
+            return random.choice(queries.get('very_complex', queries.get('complex', ["SELECT 1"])))
+        else:  # mixed
+            weights = [0.3, 0.4, 0.2, 0.1]
+            types = ['simple', 'medium', 'complex', 'very_complex']
+            chosen_type = random.choices(types, weights=weights)[0]
+            return self._get_query(chosen_type)
+    
+    def _get_db_connection(self):
+        """Создаёт соединение с PostgreSQL"""
+        return psycopg2.connect(
+            host="localhost",
+            port=5432,
+            user="test_user",
+            password="test_password",
+            database="test_db"
+        )
+    
+    def _execute_query(self, conn, query: str) -> Tuple[float, bool, int]:
+        """Выполняет один запрос и измеряет время."""
+        try:
+            start = time.perf_counter()
+            with conn.cursor() as cur:
+                cur.execute(query)
+                rows = cur.fetchall()
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            return elapsed_ms, True, len(rows)
+        except Exception as e:
+            logger.debug(f"Ошибка запроса: {e}")
+            return 0, False, 0
+    
+    def _run_single_workload(self, duration_seconds: int, 
+                            query_weights: Dict[str, float]) -> Dict[str, Any]:
+        """Запускает один поток нагрузки."""
+        conn = self._get_db_connection()
+        end_time = time.time() + duration_seconds
+        
+        results = {
+            'total_queries': 0,
+            'successful': 0,
+            'total_time_ms': 0,
+            'min_time_ms': float('inf'),
+            'max_time_ms': 0,
+            'by_type': {}
         }
         
-        # Вычисляем "качество" конфигурации (0-1)
-        quality = 1.0
-        for param, ideal_value in ideal_config.items():
-            if param in config:
-                current = config[param]
-                if ideal_value != 0:
-                    # Относительное отклонение
-                    deviation = abs(current - ideal_value) / ideal_value
-                    quality *= (1 - min(deviation, 1.0) * 0.3)
+        try:
+            while time.time() < end_time:
+                # Выбираем тип запроса согласно весам
+                query_type = random.choices(
+                    list(query_weights.keys()),
+                    weights=list(query_weights.values())
+                )[0]
+                
+                # Получаем запрос для текущей схемы
+                query = self._get_query(query_type)
+                
+                elapsed_ms, success, _ = self._execute_query(conn, query)
+                
+                if success:
+                    results['successful'] += 1
+                    results['total_time_ms'] += elapsed_ms
+                    results['min_time_ms'] = min(results['min_time_ms'], elapsed_ms)
+                    results['max_time_ms'] = max(results['max_time_ms'], elapsed_ms)
+                    
+                    if query_type not in results['by_type']:
+                        results['by_type'][query_type] = {'count': 0, 'total_time_ms': 0}
+                    results['by_type'][query_type]['count'] += 1
+                    results['by_type'][query_type]['total_time_ms'] += elapsed_ms
+                
+                results['total_queries'] += 1
+                time.sleep(random.uniform(0.01, 0.05))
+                
+        finally:
+            conn.close()
         
-        # Чем выше quality, тем выше throughput и ниже latency
-        base_throughput = 500 + quality * 700  # от 500 до 1200 TPS
-        base_latency = 80 - quality * 60       # от 80 до 20 ms
-        error_rate = 0.05 * (1 - quality)      # ошибки только при плохих конфигурациях
+        return results
+    
+    def _run_parallel_workload(self, duration_seconds: int, num_threads: int,
+                               query_weights: Dict[str, float]) -> Dict[str, Any]:
+        """Запускает параллельную нагрузку в несколько потоков."""
+        with ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = [
+                executor.submit(self._run_single_workload, duration_seconds, query_weights)
+                for _ in range(num_threads)
+            ]
+            
+            all_results = []
+            for future in as_completed(futures):
+                all_results.append(future.result())
         
-        metrics = {
-            'throughput': base_throughput,
-            'avg_latency': base_latency,
-            'min_latency': base_latency * 0.7,
-            'max_latency': base_latency * 1.5,
-            'error_rate': error_rate,
-            'total_requests': int(base_throughput * test_duration),
-            'successful_requests': int(base_throughput * test_duration * (1 - error_rate))
+        # Агрегация результатов
+        aggregated = {
+            'total_queries': 0,
+            'successful': 0,
+            'total_time_ms': 0,
+            'min_time_ms': float('inf'),
+            'max_time_ms': 0,
+            'tps': 0,
+            'avg_latency_ms': 0,
+            'by_type': {}
         }
         
-        logger.info(f"Эмулированный тест завершен. Quality={quality:.2f}, Throughput={metrics['throughput']:.2f} TPS")
-        return metrics
+        for r in all_results:
+            aggregated['total_queries'] += r['total_queries']
+            aggregated['successful'] += r['successful']
+            aggregated['total_time_ms'] += r['total_time_ms']
+            aggregated['min_time_ms'] = min(aggregated['min_time_ms'], r['min_time_ms'])
+            aggregated['max_time_ms'] = max(aggregated['max_time_ms'], r['max_time_ms'])
+            
+            for qtype, stats in r['by_type'].items():
+                if qtype not in aggregated['by_type']:
+                    aggregated['by_type'][qtype] = {'count': 0, 'total_time_ms': 0}
+                aggregated['by_type'][qtype]['count'] += stats['count']
+                aggregated['by_type'][qtype]['total_time_ms'] += stats['total_time_ms']
+        
+        if aggregated['successful'] > 0:
+            aggregated['tps'] = aggregated['successful'] / duration_seconds
+            aggregated['avg_latency_ms'] = aggregated['total_time_ms'] / aggregated['successful']
+        
+        for qtype in aggregated['by_type']:
+            count = aggregated['by_type'][qtype]['count']
+            if count > 0:
+                aggregated['by_type'][qtype]['avg_latency_ms'] = \
+                    aggregated['by_type'][qtype]['total_time_ms'] / count
+                aggregated['by_type'][qtype]['tps'] = count / duration_seconds
+        
+        return aggregated
     
     def run_test(self, test_name: str = "test") -> str:
         """
         Запускает нагрузочный тест.
         
-        Args:
-            test_name: Имя теста для идентификации результатов
-            
         Returns:
-            str: Путь к файлу с результатами
+            str: Путь к файлу с результатами (JSON)
         """
         results_dir = self.config.get('RESULTS_DIR', './results/')
         os.makedirs(results_dir, exist_ok=True)
         
-        # Если JMeter не доступен, используем эмуляцию
-        if not self.use_jmeter:
-            metrics = self._run_emulated_test(test_name)
-            results_file = os.path.join(results_dir, f"{test_name}_emulated.json")
-            with open(results_file, 'w', encoding='utf-8') as f:
-                json.dump(metrics, f, indent=2)
-            logger.info(f"Результаты сохранены в: {results_file}")
-            return results_file
+        test_duration = self.config.get('TEST_DURATION', 30)
+        num_threads = self.config.get('WORKLOAD_PARALLEL', 4)
+        query_mix = self.config.get('WORKLOAD_QUERY_MIX', 'mixed')
         
-        # Используем JMeter
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        results_file = os.path.join(results_dir, f"{test_name}_{timestamp}.jtl")
-        log_file = os.path.join(results_dir, f"{test_name}_{timestamp}.log")
+        # Настройка весов запросов
+        if query_mix == 'oltp':
+            query_weights = {'simple': 0.7, 'medium': 0.2, 'complex': 0.07, 'very_complex': 0.03}
+        elif query_mix == 'olap':
+            query_weights = {'simple': 0.1, 'medium': 0.2, 'complex': 0.4, 'very_complex': 0.3}
+        else:  # mixed
+            query_weights = {'simple': 0.3, 'medium': 0.4, 'complex': 0.2, 'very_complex': 0.1}
         
-        jmeter_path = self.config.get('JMETER_PATH', 'jmeter')
-        test_plan = self.config.get('TEST_PLAN', 'test_plan.jmx')
+        logger.info(f"Запуск нагрузочного теста: {test_name}")
+        logger.info(f"  Длительность: {test_duration} сек, Потоков: {num_threads}")
+        logger.info(f"  Тип нагрузки: {query_mix}")
         
-        # Проверяем существование test_plan.jmx
-        if not os.path.exists(test_plan):
-            logger.error(f"Файл test_plan.jmx не найден: {test_plan}")
-            logger.info("Переключаемся на режим эмуляции")
-            self.use_jmeter = False
-            return self.run_test(test_name)
+        # Запускаем нагрузку
+        results = self._run_parallel_workload(test_duration, num_threads, query_weights)
         
-        # Формируем команду
-        cmd = f'"{jmeter_path}" -n -t "{test_plan}" -l "{results_file}" -j "{log_file}"'
+        # Формируем результат
+        metrics = {
+            'throughput': results.get('tps', 0),
+            'avg_latency': results.get('avg_latency_ms', 0),
+            'min_latency': results.get('min_time_ms', 0),
+            'max_latency': results.get('max_time_ms', 0),
+            'error_rate': 1 - (results.get('successful', 0) / max(results.get('total_queries', 1), 1)),
+            'total_requests': results.get('total_queries', 0),
+            'successful_requests': results.get('successful', 0),
+            'queries_by_type': results.get('by_type', {})
+        }
         
-        logger.info(f"Запуск JMeter: {cmd}")
+        # Сохраняем результаты
+        results_file = os.path.join(results_dir, f"{test_name}_workload.json")
+        with open(results_file, 'w', encoding='utf-8') as f:
+            json.dump(metrics, f, indent=2)
         
-        try:
-            process = subprocess.Popen(
-                cmd,
-                shell=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
-            
-            test_duration = self.config.get('TEST_DURATION', 30)
-            stdout, stderr = process.communicate(timeout=test_duration + 60)
-            
-            if process.returncode == 0:
-                logger.info(f"Тест завершен успешно. Результаты: {results_file}")
-                
-                # Проверяем, что файл результатов создан
-                if os.path.exists(results_file) and os.path.getsize(results_file) > 0:
-                    return results_file
-                else:
-                    logger.error("Файл результатов пуст или не создан")
-                    logger.info("Переключаемся на режим эмуляции")
-                    self.use_jmeter = False
-                    return self.run_test(test_name)
-            else:
-                logger.error(f"Ошибка JMeter (код {process.returncode})")
-                if stderr:
-                    logger.error(f"STDERR: {stderr[:500]}")
-                logger.info("Переключаемся на режим эмуляции")
-                self.use_jmeter = False
-                return self.run_test(test_name)
-                
-        except subprocess.TimeoutExpired:
-            logger.error("Таймаут при выполнении теста")
-            process.kill()
-            logger.info("Переключаемся на режим эмуляции")
-            self.use_jmeter = False
-            return self.run_test(test_name)
-        except Exception as e:
-            logger.error(f"Ошибка при запуске теста: {e}")
-            logger.info("Переключаемся на режим эмуляции")
-            self.use_jmeter = False
-            return self.run_test(test_name)
+        logger.info(f"Результаты сохранены в: {results_file}")
+        logger.info(f"  Throughput: {metrics['throughput']:.2f} TPS")
+        logger.info(f"  Avg Latency: {metrics['avg_latency']:.2f} ms")
+        logger.info(f"  Error Rate: {metrics['error_rate']*100:.2f}%")
+        
+        if metrics.get('queries_by_type'):
+            logger.info("  Статистика по типам запросов:")
+            for qtype, stats in metrics['queries_by_type'].items():
+                logger.info(f"    {qtype}: {stats['count']} запр., "
+                           f"TPS={stats.get('tps', 0):.2f}, "
+                           f"Latency={stats.get('avg_latency_ms', 0):.2f} ms")
+        
+        return results_file
     
     def parse_results(self, results_file: str) -> Dict[str, float]:
-        """
-        Парсит результаты нагрузочного тестирования.
-        """
+        """Парсит результаты нагрузочного тестирования."""
         metrics = {
             'throughput': 0.0,
             'avg_latency': 0.0,
@@ -235,74 +337,13 @@ class LoadTester:
                 logger.error(f"Файл результатов не найден: {results_file}")
                 return metrics
             
-            # JSON (эмуляция)
-            if results_file.endswith('.json'):
-                with open(results_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    metrics.update(data)
-                logger.info(f"Загружены эмулированные результаты: Throughput={metrics['throughput']:.2f} TPS")
-                return metrics
-            
-            # JTL файл (JMeter) - читаем построчно
-            import csv
-            
             with open(results_file, 'r', encoding='utf-8') as f:
-                # Пропускаем комментарии (строки, начинающиеся с #)
-                lines = [line for line in f if not line.startswith('#')]
+                data = json.load(f)
+                metrics.update(data)
             
-            if not lines:
-                logger.error("JTL файл не содержит данных после пропуска комментариев")
-                return metrics
-            
-            # Читаем CSV
-            reader = csv.DictReader(lines)
-            
-            # Получаем список колонок
-            fieldnames = reader.fieldnames
-            logger.info(f"Колонки в JTL файле: {fieldnames}")
-            
-            total_requests = 0
-            successful_requests = 0
-            latencies = []
-            
-            for row in reader:
-                total_requests += 1
-                
-                # Проверяем success (может быть 'true'/'false' или 'True'/'False' или boolean)
-                success_value = row.get('success', 'false')
-                if success_value in ['true', 'True', 'TRUE', '1', 'yes']:
-                    successful_requests += 1
-                
-                # Получаем latency (elapsed)
-                elapsed_str = row.get('elapsed', '0')
-                try:
-                    elapsed = float(elapsed_str)
-                    latencies.append(elapsed)
-                except ValueError:
-                    pass
-            
-            if total_requests > 0:
-                metrics['total_requests'] = total_requests
-                metrics['successful_requests'] = successful_requests
-                metrics['error_rate'] = 1 - (successful_requests / total_requests)
-                
-                test_duration = self.config.get('TEST_DURATION', 30)
-                metrics['throughput'] = total_requests / test_duration
-            
-            if latencies:
-                metrics['avg_latency'] = sum(latencies) / len(latencies)
-                metrics['min_latency'] = min(latencies)
-                metrics['max_latency'] = max(latencies)
-            
-            logger.info(f"JMeter результаты: Throughput={metrics['throughput']:.2f} TPS, "
-                    f"Avg Latency={metrics['avg_latency']:.2f} ms, "
-                    f"Total requests={total_requests}, "
-                    f"Successful={successful_requests}, "
-                    f"Error Rate={metrics['error_rate']*100:.2f}%")
+            logger.info(f"Загружены результаты: Throughput={metrics['throughput']:.2f} TPS")
             
         except Exception as e:
             logger.error(f"Ошибка при парсинге результатов: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
         
         return metrics

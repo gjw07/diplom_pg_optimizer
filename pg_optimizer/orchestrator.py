@@ -150,11 +150,11 @@ class OptimizationOrchestrator:
         
         baseline_config = {
             'shared_buffers': 1024,
-            'work_mem': 3,
+            'work_mem': 221,
             'maintenance_work_mem': 64,
-            'random_page_cost': 4.0,
+            'random_page_cost': 3.7,
             'effective_cache_size': 512,
-            'checkpoint_timeout': 300
+            'checkpoint_timeout': 667
         }
         
         self.db.apply_config(baseline_config)

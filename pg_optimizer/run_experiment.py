@@ -34,6 +34,11 @@ def run_experiment():
     logger.info("ЗАПУСК ЭКСПЕРИМЕНТА ПО ОПТИМИЗАЦИИ POSTGRESQL")
     logger.info("=" * 70)
     
+    # Получаем выбранную схему БД
+    schema_level = config.DATABASE_SCHEMA.get('LEVEL', 'medium')
+    logger.info(f"Выбрана схема базы данных: {schema_level.upper()}")
+    logger.info(f"Описание: {config.DATABASE_SCHEMA['SCHEMAS'][schema_level]['description']}")
+    
     try:
         # 1. Инициализация компонентов
         logger.info("Этап 1: Инициализация компонентов системы")
@@ -46,6 +51,32 @@ def run_experiment():
         if not db.start_container():
             logger.error("Не удалось запустить контейнер с PostgreSQL")
             return
+        
+        # 2.5. Генерация тестовых данных (с выбранной схемой)
+        logger.info(f"Этап 2.5: Генерация тестовых данных (схема: {schema_level})")
+        from .generate_test_data import TestDataGenerator
+
+        # Используем DOCKER_CONFIG напрямую
+        data_generator = TestDataGenerator(config.DOCKER_CONFIG, schema_level=schema_level)
+        if data_generator.connect():
+            logger.info("Пересоздание тестовых данных...")
+            data_generator.drop_all_tables()
+            data_generator.create_all_tables()
+            
+            # Получаем параметры генерации из конфигурации
+            # schema_level уже в нижнем регистре ('simple', 'medium', 'complex')
+            schema_params = config.DATABASE_SCHEMA['SCHEMAS'][schema_level]
+            counts = {
+                'employees': schema_params.get('employees', 100),
+                'customers': schema_params.get('customers', 200),
+                'products': schema_params.get('products', 50),
+                'orders': schema_params.get('orders', 500)
+            }
+            
+            data_generator.generate_full_dataset(counts)
+            data_generator.disconnect()
+        else:
+            logger.warning("Не удалось подключиться для генерации данных")
         
         # 3. Инициализация GA Engine
         logger.info("Этап 3: Инициализация генетического алгоритма")
@@ -60,7 +91,7 @@ def run_experiment():
             dummy_evaluate
         )
         
-        # 4. Создание оркестратора - ПЕРЕДАЕМ РОВНО 4 АРГУМЕНТА!
+        # 4. Создание оркестратора
         logger.info("Этап 4: Создание оркестратора")
         orchestrator = OptimizationOrchestrator(db, load_tester, metrics, ga)
         
