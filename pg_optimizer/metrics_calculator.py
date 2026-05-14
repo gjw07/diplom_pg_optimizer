@@ -58,31 +58,28 @@ class MetricsCalculator:
         latency = load_test_metrics.get('avg_latency', 100)
         error_rate = load_test_metrics.get('error_rate', 0)
         cpu = system_metrics.get('cpu_percent', 50)
+        memory = system_metrics.get('memory_percent', 0)  # Добавлено
         
-        if error_rate > 0.05:
+        if error_rate > 0.01:
             return 0.0
         
-        # Если есть baseline — используем относительную оценку
+        # Относительная оценка
         if self.baseline_throughput is not None and self.baseline_throughput > 0:
             tp_score = tp / self.baseline_throughput
             latency_score = self.baseline_latency / max(latency, 0.1)
         else:
-            tp_target = self.config.get('TARGET_TP', 150)
-            tp_score = tp / tp_target
-            latency_score = self.config.get('MAX_LATENCY', 100) / max(latency, 0.1)
-        
-        # Ограничиваем
-        tp_score = min(tp_score, 2.0)
-        latency_score = min(latency_score, 2.0)
+            tp_score = tp / 150
+            latency_score = 100 / max(latency, 0.1)
         
         cpu_penalty = cpu / 100.0
+        memory_penalty = memory / 100.0 if memory > 0 else 0  # Добавлен штраф за память
         
-        fitness = (tp_score * 0.6) + (latency_score * 0.3) - (cpu_penalty * 0.1)
+        # Формула с учётом памяти
+        fitness = (tp_score * 0.6) + (latency_score * 0.25) - (cpu_penalty * 0.1) - (memory_penalty * 0.05)
         
-        # НЕ ОГРАНИЧИВАЕМ максимум, чтобы алгоритм видел улучшения
-        fitness = max(fitness, 0.0)  # только минимум
+        fitness = max(fitness, 0.0)
         
         logger.info(f"Fitness: tp={tp:.2f}({tp_score:.3f}), lat={latency:.2f}({latency_score:.3f}), "
-                    f"cpu={cpu:.1f}% -> fitness={fitness:.3f}")
+                    f"cpu={cpu:.1f}%, mem={memory:.1f}% -> fitness={fitness:.3f}")
         
         return fitness

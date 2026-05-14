@@ -11,7 +11,7 @@ from typing import Dict, Any, Tuple
 import psycopg2
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from pg_optimizer.test_queries import TestQueries
+# from pg_optimizer.test_queries import TestQueries
 
 logger = logging.getLogger(__name__)
 

@@ -16,52 +16,51 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # }
 OPTIMIZABLE_PARAMS = {
     'shared_buffers': {
-        'min': 128,      # MB
-        'max': 4096,     # MB (4GB)
+        'min': 64,       # MB - меньше для контраста
+        'max': 8192,     # MB - до 8GB
         'type': int,
         'unit': 'MB',
         'description': 'Объем памяти для кэширования данных'
     },
     'work_mem': {
-        'min': 4,        # MB
-        'max': 256,      # MB
+        'min': 1,        # MB - очень мало
+        'max': 512,      # MB - очень много
         'type': int,
         'unit': 'MB',
         'description': 'Память для операций сортировки и хеширования'
     },
     'maintenance_work_mem': {
-        'min': 64,       # MB
-        'max': 1024,     # MB (1GB)
+        'min': 16,       # MB
+        'max': 2048,     # MB (2GB)
         'type': int,
         'unit': 'MB',
         'description': 'Память для операций техобслуживания'
     },
     'random_page_cost': {
-        'min': 1.0,
-        'max': 4.0,
+        'min': 1.0,      # SSD/в память
+        'max': 4.0,      # HDD
         'type': float,
         'unit': '',
         'description': 'Стоимость случайного доступа к диску'
     },
     'effective_cache_size': {
-        'min': 1024,     # MB (1GB)
-        'max': 16384,    # MB (16GB)
+        'min': 512,      # MB
+        'max': 32768,    # MB (32GB)
         'type': int,
         'unit': 'MB',
         'description': 'Оценка объема памяти для кэширования ОС'
     },
     'checkpoint_timeout': {
-        'min': 30,       # seconds
-        'max': 900,      # seconds (15 min)
+        'min': 15,       # seconds
+        'max': 1800,     # seconds (30 min)
         'type': int,
         'unit': 'sec',
         'description': 'Частота выполнения контрольных точек'
     }
 }
-
 # Параметры генетического алгоритма
 GA_CONFIG = {
-    'POPULATION_SIZE': 10,   # было 3
+    'POPULATION_SIZE': 15,   # было 3
     'GENERATIONS': 5,       # было 3
     'CXPB': 0.7,
     'MUTPB': 0.2,
@@ -84,11 +83,11 @@ JMETER_CONFIG = {
     'JMETER_PATH': 'D:/Program Files/apache-jmeter-5.6.3/bin/jmeter.bat',  # или полный путь к jmeter.bat
     'TEST_PLAN': os.path.join(PROJECT_ROOT, 'test_plan.jmx'),  # ПОЛНЫЙ ПУТЬ!
     'RESULTS_DIR': os.path.join(PROJECT_ROOT, 'results/'),
-    'TEST_DURATION': 30,       # seconds
+    'TEST_DURATION': 60,       # seconds
     'NUM_THREADS': 10,         # количество виртуальных пользователей
     'RAMP_UP': 5,              # время наращивания нагрузки (сек)
     'USE_WORKLOAD_GENERATOR': True,  # <-- НОВЫЙ ПАРАМЕТР: использовать генератор сложных запросов
-    'WORKLOAD_PARALLEL': 4,          # <-- Количество параллельных потоков
+    'WORKLOAD_PARALLEL': 8,          # <-- Количество параллельных потоков
     'WORKLOAD_QUERY_MIX': 'mixed',   # <-- Тип нагрузки: 'oltp', 'olap', 'mixed'
 }
 # Параметры фитнес-функции
@@ -112,10 +111,10 @@ PATHS = {
 # Настройка схемы базы данных
 DATABASE_SCHEMA = {
     # Уровень схемы: 'simple', 'medium', 'complex'
-    'LEVEL': 'simple',  # <-- МЕНЯЙТЕ ЗДЕСЬ для выбора схемы
+    'LEVEL': 'complex',  # <-- МЕНЯЙТЕ ЗДЕСЬ для выбора схемы
     
     # Объём данных: 'small', 'medium', 'large'
-    'DATA_SIZE': 'small',  # <-- МЕНЯЙТЕ ЗДЕСЬ для выбора объёма
+    'DATA_SIZE': 'large',  # <-- МЕНЯЙТЕ ЗДЕСЬ для выбора объёма
     
     # Доступные схемы
     'SCHEMAS': {
@@ -155,12 +154,12 @@ DATABASE_SCHEMA = {
         },
         'large': {
             'name': 'Большой',
-            'employees': 1000,
-            'customers': 5000,
-            'products': 200,
-            'orders': 10000,
-            'projects': 50,
-            'skills': 40
+            'employees': 20000000,
+            'customers': 20000000,
+            'products': 10000000,
+            'orders': 20000000,
+            'projects': 10000000,
+            'skills': 10000000
         }
     }
 }

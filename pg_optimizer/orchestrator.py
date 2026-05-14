@@ -99,9 +99,14 @@ class OptimizationOrchestrator:
             load_metrics = self.load_tester.parse_results(results_file)
             
             # Собираем системные метрики
-            system_metrics = self.metrics.collect_system_metrics()
+            container_stats = self.db.get_container_stats()
+            system_metrics = {
+                'cpu_percent': container_stats.get('cpu_usage', 0),
+                'memory_percent': container_stats.get('memory_usage_percent', 0),
+                'memory_usage_mb': container_stats.get('memory_usage_mb', 0),
+                'disk_io_total_mb': 0  # можно добавить позже
+            }
             
-            # Вычисляем фитнес
             fitness = self.metrics.calculate_fitness(load_metrics, system_metrics)
             
             # Сохраняем результаты в CSV
@@ -149,12 +154,12 @@ class OptimizationOrchestrator:
         logger.info("Запуск теста с базовой конфигурацией")
         
         baseline_config = {
-            'shared_buffers': 1024,
-            'work_mem': 221,
+            'shared_buffers': 128,
+            'work_mem': 4,
             'maintenance_work_mem': 64,
-            'random_page_cost': 3.7,
-            'effective_cache_size': 512,
-            'checkpoint_timeout': 667
+            'random_page_cost': 4.0,
+            'effective_cache_size': 4096,
+            'checkpoint_timeout': 300
         }
         
         self.db.apply_config(baseline_config)

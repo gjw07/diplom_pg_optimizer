@@ -156,24 +156,22 @@ class GeneticAlgorithmEngine:
         
         return ind1, ind2
     
-    def _custom_mutation(self, individual: list) -> Tuple[list]:
-        """
-        Кастомный оператор мутации (гауссова мутация).
-        
-        Args:
-            individual: Индивидуум для мутации
-            
-        Returns:
-            Tuple[list]: Мутировавший индивидуум
-        """
+    def _custom_mutation(self, individual: list, generation: int = None) -> Tuple[list]:
+        """Кастомный оператор мутации с адаптивной силой"""
         if random.random() < self.ga_config['MUTPB']:
+            # Адаптивная сила мутации: больше в начале, меньше в конце
+            if generation is not None:
+                max_gen = self.ga_config['GENERATIONS']
+                mutation_strength = 0.3 * (1 - generation / max_gen) + 0.1
+            else:
+                mutation_strength = 0.2
+            
             for i in range(len(individual)):
-                if random.random() < 0.1:  # 10% генов мутируют
+                if random.random() < 0.15:  # 15% генов мутируют
                     param_name = list(self.params_config.keys())[i]
                     param_info = self.params_config[param_name]
                     
-                    # Гауссова мутация
-                    sigma = (param_info['max'] - param_info['min']) * 0.1  # 10% от диапазона
+                    sigma = (param_info['max'] - param_info['min']) * mutation_strength
                     mutation = random.gauss(0, sigma)
                     individual[i] += mutation
                     

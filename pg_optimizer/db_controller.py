@@ -225,3 +225,31 @@ class DBController:
             logger.error(f"Ошибка при получении статистики: {e}")
         
         return stats
+    
+        def get_container_stats(self) -> Dict[str, float]:
+            """Получает статистику использования ресурсов контейнером."""
+            stats = {'cpu_usage': 0.0, 'memory_usage_mb': 0.0, 'memory_usage_percent': 0.0}
+            try:
+                if self.container:
+                    container_stats = self.container.stats(stream=False)
+                    
+                    # CPU usage
+                    cpu_delta = container_stats['cpu_stats']['cpu_usage']['total_usage'] - \
+                                container_stats['precpu_stats']['cpu_usage']['total_usage']
+                    system_delta = container_stats['cpu_stats']['system_cpu_usage'] - \
+                                container_stats['precpu_stats']['system_cpu_usage']
+                    
+                    if system_delta > 0:
+                        stats['cpu_usage'] = (cpu_delta / system_delta) * 100.0
+                    
+                    # Memory usage (в MB и процентах от лимита контейнера)
+                    mem_usage = container_stats['memory_stats']['usage']
+                    mem_limit = container_stats['memory_stats']['limit']
+                    stats['memory_usage_mb'] = mem_usage / (1024 * 1024)
+                    if mem_limit > 0:
+                        stats['memory_usage_percent'] = (mem_usage / mem_limit) * 100.0
+                    
+            except Exception as e:
+                logger.error(f"Ошибка при получении статистики: {e}")
+            
+            return stats
